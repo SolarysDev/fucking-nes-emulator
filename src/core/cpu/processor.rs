@@ -1,8 +1,8 @@
 use crate::core::cpu::status_flags::CPUStatusFlags;
 use crate::core::cpu::instructions;
-use crate::core::cpu::instructions::{CPU_OPCODES, OpCode};
+use crate::core::cpu::instructions::{CPU_OPCODES, OpCode, ProcessorAction::*};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[allow(non_camel_case_types)]
 pub enum AddressingMode {
     Immediate,
@@ -70,7 +70,7 @@ impl Processor {
     pub fn load_and_run(&mut self, program: Vec<u8>) {
         self.load(program);
         self.reset();
-        self.run()
+        self.run();
     }
 
     pub fn reset(&mut self) {
@@ -84,28 +84,43 @@ impl Processor {
         self.program_counter = self.mem_read_u16(0xFFFC);
     }
 
+    pub fn branch(&mut self, condition: bool) {
+        if !condition { return; }
+
+        let jump = self.mem_read(self.program_counter) as i8;
+        let jump_addr = self.program_counter
+            .wrapping_add(1)
+            .wrapping_add(jump as u16);
+
+        self.program_counter = jump_addr;
+    }
+
     pub fn run(&mut self) {
+
+
         loop {
             let next_byte = self.mem_read(self.program_counter);
             self.program_counter += 1;
-
             let mut cpu_opcodes_iter = CPU_OPCODES.iter();
             let opcode: &OpCode = cpu_opcodes_iter.find(|oc| oc.hex == next_byte)
-                .unwrap_or_else(|| panic!("invalid opcode: {:#04x}", next_byte));
+                .unwrap_or_else(|| panic!("invalid opcode: {next_byte:#04x}"));
 
-            match opcode.human {
-                "LDA" => {
-                    instructions::lda(self, opcode);
-                }
-                "TAX" => {
-                    instructions::tax(self);
-                },
-                "INX" => {
-                    instructions::inx(self);
-                },
-                "BRK" => return,
+            match &opcode.action {
+                ADC => instructions::adc(self, opcode),
+                AND => instructions::and(self, opcode),
+                ASL => instructions::asl(self, opcode),
+                BCC => instructions::bcc(self),
+                BCS => instructions::bcs(self),
+                BEQ => instructions::beq(self),
+                BIT => instructions::bit(self, opcode),
+                BRK => return,
+                INX => instructions::inx(self),
+                LDA => instructions::lda(self, opcode),
+                SBC => instructions::sbc(self, opcode),
+                STA => instructions::sta(self, opcode),
+                TAX => instructions::tax(self),
 
-                _ => todo!("{} (hex {:#04x}) not yet implemented", opcode.human, opcode.hex)
+                _ => todo!("{:#?} (hex {:#04x}) not yet implemented", opcode.action, opcode.hex)
             }
         }
     }
@@ -114,52 +129,52 @@ impl Processor {
         match mode {
             AddressingMode::Immediate => self.program_counter,
 
-            AddressingMode::ZeroPage => self.mem_read(self.program_counter) as u16,
+            AddressingMode::ZeroPage => u16::from(self.mem_read(self.program_counter)),
 
             AddressingMode::Absolute => self.mem_read_u16(self.program_counter),
 
             AddressingMode::ZeroPage_X => {
                 let pos = self.mem_read(self.program_counter);
-                let addr = pos.wrapping_add(self.register_x) as u16;
-                addr
+                
+                u16::from(pos.wrapping_add(self.register_x))
             }
             AddressingMode::ZeroPage_Y => {
                 let pos = self.mem_read(self.program_counter);
-                let addr = pos.wrapping_add(self.register_y) as u16;
-                addr
+                
+                u16::from(pos.wrapping_add(self.register_y))
             }
 
             AddressingMode::Absolute_X => {
                 let base = self.mem_read_u16(self.program_counter);
-                let addr = base.wrapping_add(self.register_x as u16);
-                addr
+                
+                base.wrapping_add(u16::from(self.register_x))
             }
             AddressingMode::Absolute_Y => {
                 let base = self.mem_read_u16(self.program_counter);
-                let addr = base.wrapping_add(self.register_y as u16);
-                addr
+                
+                base.wrapping_add(u16::from(self.register_y))
             }
 
             AddressingMode::Indirect_X => {
                 let base = self.mem_read(self.program_counter);
 
                 let ptr: u8 = (base).wrapping_add(self.register_x);
-                let lo = self.mem_read(ptr as u16);
-                let hi = self.mem_read(ptr.wrapping_add(1) as u16);
+                let lo = self.mem_read(u16::from(ptr));
+                let hi = self.mem_read(u16::from(ptr.wrapping_add(1)));
                 u16::from_le_bytes([lo, hi])
             }
             AddressingMode::Indirect_Y => {
                 let base = self.mem_read(self.program_counter);
 
-                let lo = self.mem_read(base as u16);
-                let hi = self.mem_read((base).wrapping_add(1) as u16);
+                let lo = self.mem_read(u16::from(base));
+                let hi = self.mem_read(u16::from((base).wrapping_add(1)));
                 let deref_base = u16::from_le_bytes([lo, hi]);
-                let deref = deref_base.wrapping_add(self.register_y as u16);
-                deref
+                
+                deref_base.wrapping_add(u16::from(self.register_y))
             }
 
             AddressingMode::NoneAddressing => {
-                panic!("mode {:?} is not supported", mode);
+                panic!("mode {mode:?} is not supported");
             }
         }
     }
